@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get the code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies and test tools
+        run: pip install -r requirements.txt pytest
+
+      - name: Run tests
+        run: pytest
+
+  docker:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - name: Get the code
+        uses: actions/checkout@v4
+
+      - name: Build the image
+        run: docker build -t mnist-app .
+
+      - name: Smoke test the container
+        run: |
+          docker run -d -p 5050:5050 --name mnist-app mnist-app
+          curl -f --retry 15 --retry-all-errors --retry-delay 2 http://localhost:5050/health
+
+      - name: Show container logs if it failed
+        if: failure()
+        run: docker logs mnist-app
