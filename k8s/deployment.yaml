@@ -1,0 +1,70 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: digits-classifier
+  labels:
+    app: digits-classifier
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: digits-classifier
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app: digits-classifier
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+      containers:
+        - name: digits-classifier
+          # CI publishes sha-<commit> and latest. Pin a sha tag to make rollbacks exact:
+          #   kubectl set image deployment/digits-classifier digits-classifier=ghcr.io/doraaadorable/docker-ci-test:sha-<commit>
+          image: ghcr.io/doraaadorable/docker-ci-test:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 5050
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 5050
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 5050
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: digits-classifier
+spec:
+  type: NodePort
+  selector:
+    app: digits-classifier
+  ports:
+    - port: 5050
+      targetPort: 5050
+      nodePort: 30080

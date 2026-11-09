@@ -1,14 +1,13 @@
+# Local stack: the classifier plus Postgres for the /visits counter.
 services:
   app:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: mnist-app
+    build: .
+    image: digits-classifier
     ports:
       - "5050:5050"
     environment:
       DB_HOST: db
-      DB_PASSWORD: demo-password
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-local-dev-only}
     depends_on:
       db:
         condition: service_healthy
@@ -16,7 +15,7 @@ services:
   db:
     image: postgres:16-alpine
     environment:
-      POSTGRES_PASSWORD: demo-password
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local-dev-only}
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
