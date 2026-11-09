@@ -1,2 +1,12 @@
-__pycache__/
 .git/
+.github/
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+model/
+tests/
+k8s/
+*.md
+docker-compose.yml

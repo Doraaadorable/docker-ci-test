@@ -1,77 +1,108 @@
-from flask import Flask, request, jsonify
-from sklearn.datasets import load_digits
-from sklearn.linear_model import LogisticRegression
-from sklearn.model_selection import train_test_split
-import socket
+"""Digit-classifier service: serves a model trained by train.py."""
+import json
 import os
-import psycopg2
+import socket
+from functools import lru_cache
+from pathlib import Path
+
+import joblib
+import numpy as np
+from flask import Flask, jsonify, request
+from werkzeug.exceptions import HTTPException
+
+MODEL_DIR = Path(os.environ.get("MODEL_DIR", Path(__file__).resolve().parent / "model"))
 
 app = Flask(__name__)
 
-# Train the model once when the application starts.
-digits = load_digits()
-X_train, X_test, y_train, y_test = train_test_split(
-    digits.data, digits.target, test_size=0.2, random_state=42
-)
 
-model = LogisticRegression(max_iter=1000)
-model.fit(X_train, y_train)
-accuracy = model.score(X_test, y_test)
-print(f"Model trained. Test accuracy: {accuracy:.3f}")
+@lru_cache(maxsize=1)
+def artifacts():
+    """Load the model, its metadata and the held-out test set once per process."""
+    model = joblib.load(MODEL_DIR / "model.joblib")
+    metadata = json.loads((MODEL_DIR / "metadata.json").read_text())
+    test = np.load(MODEL_DIR / "test_set.npz")
+    return model, metadata, test["X"], test["y"]
 
 
-@app.route("/")
+def error(status, message):
+    return jsonify(error=message), status
+
+
+@app.errorhandler(HTTPException)
+def http_error(exc):
+    return error(exc.code, exc.description)
+
+
+@app.get("/")
 def home():
-    return f"<h1>Hello</h1><p>Model test accuracy: {accuracy:.1%}</p>"
+    _, metadata, _, _ = artifacts()
+    return f"<h1>Digit classifier</h1><p>Test accuracy: {metadata['test_accuracy']:.1%}</p>"
 
 
-@app.route("/health")
+@app.get("/health")
 def health():
-    return jsonify(
-        status="ok",
-        test_accuracy=round(accuracy, 3),
-        pod=socket.gethostname(),
-    )
+    _, metadata, _, _ = artifacts()
+    return jsonify(status="ok", test_accuracy=metadata["test_accuracy"], pod=socket.gethostname())
 
 
-@app.route("/sample/<int:i>")
+@app.get("/metadata")
+def model_metadata():
+    _, metadata, _, _ = artifacts()
+    return jsonify(metadata)
+
+
+@app.get("/sample/<int:i>")
 def sample(i):
-    return jsonify(
-        pixels=X_test[i].tolist(),
-        label=int(y_test[i]),
-    )
+    _, _, X_test, y_test = artifacts()
+    if not 0 <= i < len(y_test):
+        return error(404, f"sample index must be between 0 and {len(y_test) - 1}")
+    return jsonify(pixels=X_test[i].tolist(), label=int(y_test[i]))
 
 
-@app.route("/predict", methods=["POST"])
+@app.post("/predict")
 def predict():
-    pixels = request.get_json()["pixels"]
-    return jsonify(prediction=int(model.predict([pixels])[0]))
+    model, metadata, _, _ = artifacts()
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict) or "pixels" not in body:
+        return error(400, 'send JSON like {"pixels": [64 numbers]}')
+    pixels = body["pixels"]
+    n, (low, high) = metadata["n_features"], metadata["pixel_range"]
+    if not isinstance(pixels, list) or len(pixels) != n:
+        return error(400, f"pixels must be a list of {n} numbers")
+    if not all(isinstance(p, (int, float)) and not isinstance(p, bool) for p in pixels):
+        return error(400, "pixels must be numbers")
+    x = np.asarray(pixels, dtype=float)
+    if not np.all(np.isfinite(x)) or x.min() < low or x.max() > high:
+        return error(400, f"pixel values must be between {low} and {high}")
+    probabilities = model.predict_proba(x.reshape(1, -1))[0]
+    best = int(np.argmax(probabilities))
+    return jsonify(prediction=int(model.classes_[best]), probability=round(float(probabilities[best]), 4))
 
 
-def get_conn():
-    return psycopg2.connect(
-        host=os.environ.get("DB_HOST", "localhost"),
-        dbname=os.environ.get("DB_NAME", "postgres"),
-        user=os.environ.get("DB_USER", "postgres"),
-        password=os.environ.get("DB_PASSWORD", "postgres"),
-    )
-
-
-@app.route("/visits")
+@app.get("/visits")
 def visits():
-    con = get_conn()
+    """Count page visits in Postgres (used by docker-compose.yml)."""
+    try:
+        import psycopg2
+
+        con = psycopg2.connect(
+            host=os.environ.get("DB_HOST", "localhost"),
+            dbname=os.environ.get("DB_NAME", "postgres"),
+            user=os.environ.get("DB_USER", "postgres"),
+            password=os.environ.get("DB_PASSWORD", ""),
+            connect_timeout=3,
+        )
+    except Exception as exc:  # database not running or not configured
+        return error(503, f"database unavailable: {type(exc).__name__}")
     try:
         with con, con.cursor() as cur:
-            cur.execute(
-                "CREATE TABLE IF NOT EXISTS visits "
-                "(id SERIAL PRIMARY KEY, at TIMESTAMP DEFAULT now())"
-            )
+            cur.execute("CREATE TABLE IF NOT EXISTS visits (id SERIAL PRIMARY KEY, at TIMESTAMP DEFAULT now())")
             cur.execute("INSERT INTO visits DEFAULT VALUES")
             cur.execute("SELECT COUNT(*) FROM visits")
-            n = cur.fetchone()[0]
+            count = cur.fetchone()[0]
     finally:
         con.close()
-    return jsonify(visits=n)
+    return jsonify(visits=count)
 
 
 if __name__ == "__main__":
