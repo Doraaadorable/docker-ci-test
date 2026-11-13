@@ -1,0 +1,32 @@
+# Tool configuration only; dependencies stay in requirements*.txt.
+
+[tool.ruff]
+line-length = 120
+target-version = "py313"
+
+[tool.ruff.lint]
+select = [
+    "E", "F",  # pycodestyle and pyflakes: syntax problems, unused imports and variables
+    "I",       # import order
+    "N",       # naming conventions
+    "B",       # likely bugs
+    "UP",      # outdated syntax
+    "ANN",     # every function declares its argument and return types
+    "ARG",     # unused arguments
+    "D1",      # public modules and functions have a docstring
+]
+ignore = [
+    "N806",  # X_train, X_test: capital X for a feature matrix is the ML convention
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["D1"]  # a test's name states what it checks
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+files = ["app.py", "train.py", "tests"]
+
+[[tool.mypy.overrides]]
+module = ["sklearn.*", "joblib.*", "psycopg2.*"]  # these libraries ship no type information
+ignore_missing_imports = true

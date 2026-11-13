@@ -31,6 +31,16 @@ python -m pytest -q tests
 python app.py
 ```
 
+**Code checks**
+
+```bash
+ruff check .            # lint: unused code, naming, missing type hints and docstrings
+ruff format --check .   # formatting
+mypy                    # static type check (strict)
+```
+
+Every function declares its argument and return types. The rules are in `pyproject.toml`.
+
 **Docker**
 
 ```bash
@@ -84,9 +94,10 @@ Deleting a pod makes the Deployment replace it; scaling adds replicas; the last 
 ## CI (`.github/workflows/ci.yml`)
 
 1. **test**: unit tests (16), covering reproducible training, every endpoint, and nine kinds of invalid input.
-2. **manifests**: `kubeconform -strict` validates `k8s/` against the Kubernetes API schema.
-3. **image**: builds the image, runs it read-only with no capabilities, and runs `scripts/smoke_test.sh` (health, a real prediction, a rejected bad request).
-4. **publish** (pushes to `main`): builds for amd64 and arm64, pushes `sha-<commit>` to GitHub Container Registry, smoke-tests the pushed image, then tags it `latest`.
+2. **lint**: `ruff check`, `ruff format --check` and `mypy` in strict mode.
+3. **manifests**: `kubeconform -strict` validates `k8s/` against the Kubernetes API schema.
+4. **image**: builds the image, runs it read-only with no capabilities, and runs `scripts/smoke_test.sh` (health, a real prediction, a rejected bad request).
+5. **publish** (pushes to `main`): builds for amd64 and arm64, pushes `sha-<commit>` to GitHub Container Registry, smoke-tests the pushed image, then tags it `latest`.
 
 ## Files
 
@@ -95,6 +106,7 @@ Deleting a pod makes the Deployment replace it; scaling adds replicas; the last 
 | `train.py` | Trains the model and writes `model/` (model, metadata, held-out set) |
 | `app.py` | Flask service |
 | `tests/test_app.py` | Unit tests |
+| `pyproject.toml` | Ruff and mypy configuration |
 | `scripts/smoke_test.sh` | Checks a running container |
 | `Dockerfile`, `.dockerignore` | Image definition |
 | `docker-compose.yml` | App plus Postgres |

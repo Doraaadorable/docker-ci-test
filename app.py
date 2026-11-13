@@ -1,14 +1,20 @@
 """Digit-classifier service: serves a model trained by train.py."""
+
 import json
 import os
 import socket
 from functools import lru_cache
 from pathlib import Path
+from typing import Any
 
 import joblib
 import numpy as np
-from flask import Flask, jsonify, request
+from flask import Flask, Response, jsonify, request
+from numpy.typing import NDArray
+from sklearn.linear_model import LogisticRegression
 from werkzeug.exceptions import HTTPException
+
+ErrorResponse = tuple[Response, int]
 
 MODEL_DIR = Path(os.environ.get("MODEL_DIR", Path(__file__).resolve().parent / "model"))
 
@@ -16,7 +22,7 @@ app = Flask(__name__)
 
 
 @lru_cache(maxsize=1)
-def artifacts():
+def artifacts() -> tuple[LogisticRegression, dict[str, Any], NDArray[np.float64], NDArray[np.int_]]:
     """Load the model, its metadata and the held-out test set once per process."""
     model = joblib.load(MODEL_DIR / "model.joblib")
     metadata = json.loads((MODEL_DIR / "metadata.json").read_text())
@@ -24,35 +30,41 @@ def artifacts():
     return model, metadata, test["X"], test["y"]
 
 
-def error(status, message):
+def error(status: int, message: str) -> ErrorResponse:
+    """Build a JSON error body with the given HTTP status."""
     return jsonify(error=message), status
 
 
 @app.errorhandler(HTTPException)
-def http_error(exc):
-    return error(exc.code, exc.description)
+def http_error(exc: HTTPException) -> ErrorResponse:
+    """Return Flask's own HTTP errors (404, 405, ...) as JSON instead of HTML."""
+    return error(exc.code or 500, exc.description or exc.name)
 
 
 @app.get("/")
-def home():
+def home() -> str:
+    """Landing page showing the model's test accuracy."""
     _, metadata, _, _ = artifacts()
     return f"<h1>Digit classifier</h1><p>Test accuracy: {metadata['test_accuracy']:.1%}</p>"
 
 
 @app.get("/health")
-def health():
+def health() -> Response:
+    """Health check used by Docker and the Kubernetes probes."""
     _, metadata, _, _ = artifacts()
     return jsonify(status="ok", test_accuracy=metadata["test_accuracy"], pod=socket.gethostname())
 
 
 @app.get("/metadata")
-def model_metadata():
+def model_metadata() -> Response:
+    """Return the metadata written by train.py."""
     _, metadata, _, _ = artifacts()
     return jsonify(metadata)
 
 
 @app.get("/sample/<int:i>")
-def sample(i):
+def sample(i: int) -> Response | ErrorResponse:
+    """Return held-out test image `i` with its label."""
     _, _, X_test, y_test = artifacts()
     if not 0 <= i < len(y_test):
         return error(404, f"sample index must be between 0 and {len(y_test) - 1}")
@@ -60,7 +72,8 @@ def sample(i):
 
 
 @app.post("/predict")
-def predict():
+def predict() -> Response | ErrorResponse:
+    """Validate the posted pixels and return the predicted digit with its probability."""
     model, metadata, _, _ = artifacts()
     body = request.get_json(silent=True)
     if not isinstance(body, dict) or "pixels" not in body:
@@ -80,7 +93,7 @@ def predict():
 
 
 @app.get("/visits")
-def visits():
+def visits() -> Response | ErrorResponse:
     """Count page visits in Postgres (used by docker-compose.yml)."""
     try:
         import psycopg2

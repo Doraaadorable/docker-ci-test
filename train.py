@@ -5,10 +5,12 @@
 The Docker build runs this, so every container serves the same model instead of
 retraining at start-up.
 """
+
 import hashlib
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 import joblib
 import numpy as np
@@ -21,7 +23,8 @@ SEED = 42
 TEST_SIZE = 0.2
 
 
-def train(out_dir):
+def train(out_dir: str | Path) -> dict[str, Any]:
+    """Train the classifier, write the model, test set and metadata to out_dir, and return the metadata."""
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     digits = load_digits()
